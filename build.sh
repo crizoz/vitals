@@ -62,6 +62,14 @@ swiftc -O -swift-version 5 \
 cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Resources/Vitals.icns" "$APP/Contents/Resources/Vitals.icns"
 
+# Un .lproj por idioma. macOS elige solo el que calce con el idioma del sistema
+# —o con el que el usuario le haya fijado a la app— y cae al inglés si no hay.
+echo "› Copiando idiomas…"
+for lproj in "$ROOT"/Resources/*.lproj; do
+    cp -R "$lproj" "$APP/Contents/Resources/"
+done
+"$ROOT/Tools/check-strings.sh" "$ROOT"
+
 echo "› Firmando…"
 codesign --force --sign "$IDENTITY" --identifier cl.makana.vitals "$APP"
 

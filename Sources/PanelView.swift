@@ -16,13 +16,13 @@ struct PanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Section(title: "Sistema", symbol: "cpu", accent: .systemAccent,
+            Section(title: L10n.sectionSystem, symbol: "cpu", accent: .systemAccent,
                     isExpanded: $showSystem, summary: systemSummary) {
                 HStack(spacing: 0) {
-                    Gauge(title: "CPU", fraction: model.cpu, text: Format.percent(model.cpu))
-                    Gauge(title: "GPU", fraction: model.gpu ?? 0,
+                    Gauge(title: L10n.gaugeCPU, fraction: model.cpu, text: Format.percent(model.cpu))
+                    Gauge(title: L10n.gaugeGPU, fraction: model.gpu ?? 0,
                           text: model.gpu.map(Format.percent) ?? "—")
-                    Gauge(title: "Memoria", fraction: model.memory.fraction,
+                    Gauge(title: L10n.gaugeMemory, fraction: model.memory.fraction,
                           reclaimable: model.memory.cachedFraction,
                           text: Format.percent(model.memory.fraction))
                 }
@@ -31,25 +31,27 @@ struct PanelView: View {
 
             separator
 
-            Section(title: "Almacenamiento", symbol: "internaldrive", accent: .systemAccent,
+            Section(title: L10n.sectionStorage, symbol: "internaldrive", accent: .systemAccent,
                     isExpanded: $showStorage, summary: storageSummary) {
                 if model.disks.isEmpty {
-                    Placeholder("Leyendo volúmenes…")
+                    Placeholder(L10n.storageReading)
                 } else {
                     ForEach(model.disks) { disk in
                         Meter(title: disk.name,
                               note: Format.percent(disk.fraction),
-                              value: "\(Format.bytesShort(disk.free)) libres",
+                              value: L10n.storageFree(Format.bytesShort(disk.free)),
                               fraction: disk.fraction,
                               accent: .systemAccent,
-                              help: "\(disk.isInternal ? "Interno" : "Externo") · \(Format.bytes(disk.used)) usados de \(Format.bytes(disk.total))")
+                              help: L10n.storageHelp(kind: disk.isInternal ? L10n.storageInternal : L10n.storageExternal,
+                                                     used: Format.bytes(disk.used),
+                                                     total: Format.bytes(disk.total)))
                     }
                 }
             }
 
             separator
 
-            Section(title: "Claude", symbol: "sparkle", accent: .claude,
+            Section(title: L10n.sectionClaude, symbol: "sparkle", accent: .claude,
                     isExpanded: $showClaude, summary: claudeSummary) {
                 claudeContent
             }
@@ -84,7 +86,7 @@ struct PanelView: View {
             if let weekly = usage.weekly { LimitMeter(bucket: weekly) }
             ForEach(usage.scoped) { LimitMeter(bucket: $0) }
         } else if model.usageError == nil {
-            Placeholder("Consultando límites…")
+            Placeholder(L10n.claudeLoading)
         }
 
         // El aviso va al final: si hay datos previos siguen a la vista.
@@ -101,7 +103,7 @@ struct PanelView: View {
 
     private var storageSummary: String {
         guard let boot = model.disks.first else { return "—" }
-        return "\(Format.bytes(boot.free)) libres"
+        return L10n.storageFree(Format.bytes(boot.free))
     }
 
     private var claudeSummary: String {
@@ -118,21 +120,19 @@ struct PanelView: View {
             Spacer(minLength: 0)
 
             CircleAction(symbol: "keyboard",
-                         help: "Bloquea las teclas 30 s para limpiarlas. El trackpad sigue libre.") {
+                         help: L10n.helpKeyboardLock) {
                 dismiss()
                 keyboardLock.start()
             }
 
             CircleAction(symbol: "cup.and.saucer.fill",
-                         help: sleepGuard.isActive
-                            ? "El Mac no se dormirá. Toca para apagarlo."
-                            : "Evita que el Mac se duerma. La pantalla igual puede apagarse.",
+                         help: sleepGuard.isActive ? L10n.helpCaffeineOn : L10n.helpCaffeineOff,
                          isOn: sleepGuard.isActive) {
                 sleepGuard.toggle()
             }
 
             CircleAction(symbol: "moon.fill",
-                         help: "Apaga la pantalla y deja el Mac despierto para que siga trabajando.") {
+                         help: L10n.helpScreenOff) {
                 dismiss()
                 sleepGuard.workWithScreenOff()
             }
@@ -163,9 +163,9 @@ struct PanelView: View {
         guard let last = model.lastUpdate else { return "" }
         let seconds = Int(Date().timeIntervalSince(last))
         switch seconds {
-        case ..<90: return "Actualizado recién"
-        case ..<3_600: return "Actualizado hace \(seconds / 60) min"
-        default: return "Actualizado hace \(seconds / 3_600) h"
+        case ..<90: return L10n.freshnessNow
+        case ..<3_600: return L10n.freshnessMinutes(seconds / 60)
+        default: return L10n.freshnessHours(seconds / 3_600)
         }
     }
 }
@@ -388,10 +388,11 @@ private struct LimitMeter: View {
     }
 
     private var help: String {
-        guard let resetsAt = bucket.resetsAt else { return "\(Format.percent(bucket.fraction)) usado" }
-        var text = "\(Format.percent(bucket.fraction)) usado · se reinicia en \(Format.countdown(to: resetsAt))"
+        let used = Format.percent(bucket.fraction)
+        guard let resetsAt = bucket.resetsAt else { return L10n.claudeUsed(used) }
+        var text = L10n.claudeUsedResets(used, Format.countdown(to: resetsAt))
         if let elapsed = bucket.elapsed {
-            text += "\nLa marca es el \(Format.percent(elapsed)) de la ventana ya transcurrido"
+            text += "\n" + L10n.claudePace(Format.percent(elapsed))
         }
         return text
     }
@@ -502,10 +503,10 @@ private struct SettingsMenu: View {
 
     var body: some View {
         Menu {
-            Button("Actualizar ahora", action: refresh)
+            Button(L10n.actionRefresh, action: refresh)
             Divider()
-            Toggle("Mostrar porcentaje en la barra", isOn: $showPercent)
-            Toggle("Abrir al iniciar sesión", isOn: $launchesAtLogin)
+            Toggle(L10n.settingsShowPercent, isOn: $showPercent)
+            Toggle(L10n.settingsLaunchAtLogin, isOn: $launchesAtLogin)
                 .onChange(of: launchesAtLogin) { _, enabled in
                     do {
                         if enabled { try SMAppService.mainApp.register() }
@@ -515,7 +516,7 @@ private struct SettingsMenu: View {
                     }
                 }
             Divider()
-            Button("Salir de Vitals") { NSApplication.shared.terminate(nil) }
+            Button(L10n.actionQuit) { NSApplication.shared.terminate(nil) }
         } label: {
             Image(systemName: "gearshape")
                 .imageScale(.small)

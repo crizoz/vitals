@@ -174,7 +174,7 @@ enum SystemMetrics {
 
         let free = values.volumeAvailableCapacityForImportantUsage.map { UInt64(max(0, $0)) } ?? 0
         let name = values.volumeName ?? url.lastPathComponent
-        return DiskInfo(name: name.isEmpty ? "Disco" : name,
+        return DiskInfo(name: name.isEmpty ? L10n.storageUnnamed : name,
                         path: url.path,
                         total: UInt64(total),
                         free: free,

@@ -100,20 +100,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.contentTintColor = alert
 
         if UserDefaults.standard.bool(forKey: "showSessionPercent") {
-            button.title = used.map { " \(Int(($0 * 100).rounded()))%" } ?? " —"
+            button.title = used.map { " " + Format.percent($0) } ?? " —"
         } else {
             button.title = ""
         }
 
         if let session, let used {
-            let percent = Int((used * 100).rounded())
-            var tip = "Sesión de 5 h: \(percent)% usado, queda \(100 - percent)%"
+            var tip = L10n.menuBarTooltip(used: Format.percent(used), left: Format.percent(1 - used))
             if let resetsAt = session.resetsAt {
-                tip += " · se reinicia en \(Format.countdown(to: resetsAt))"
+                tip += L10n.menuBarTooltipResets(Format.countdown(to: resetsAt))
             }
             button.toolTip = tip
         } else {
-            button.toolTip = "Sesión de Claude · sin datos"
+            button.toolTip = L10n.menuBarNoData
         }
     }
 
@@ -130,6 +129,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sizeObservation = controller.observe(\.preferredContentSize, options: [.new]) { [weak self] _, change in
             guard let size = change.newValue, size.height > 1 else { return }
             self?.resize(to: size)
+        }
+
+        // El monitor de clics no alcanza a ver todo: el reloj, el Centro de
+        // Control y los demás íconos de la barra se tragan el clic en su propio
+        // bucle de seguimiento, y un Cmd-Tab no es un clic. Lo que sí ocurre en
+        // todos esos casos es que el panel deja de ser la ventana con foco.
+        NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification, object: panel)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.hideIfFocusLeft() }
+            .store(in: &cancellables)
+    }
+
+    /// El menú del engranaje también le saca el foco al panel, y ahí no hay
+    /// nada que cerrar: el foco sigue en una ventana propia. Un paso por el
+    /// runloop para que esa ventana alcance a tomarlo.
+    private func hideIfFocusLeft() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.panel.isVisible, !self.panel.isKeyWindow,
+                  !NSApp.windows.contains(where: { $0.isKeyWindow })
+            else { return }
+            self.hidePanel()
         }
     }
 
@@ -178,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func hidePanel() {
+        guard panel.isVisible else { return }
         stopMonitors()
         model.setPanelOpen(false)
         NSAnimationContext.runAnimationGroup { context in
@@ -221,9 +242,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showContextMenu() {
         guard let button = statusItem.button else { return }
         let menu = NSMenu()
-        menu.addItem(withTitle: "Actualizar ahora", action: #selector(refresh), keyEquivalent: "r").target = self
+        menu.addItem(withTitle: L10n.actionRefresh, action: #selector(refresh), keyEquivalent: "r").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Salir de Vitals", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(withTitle: L10n.actionQuit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         statusItem.menu = menu
         button.performClick(nil)
@@ -244,6 +265,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(true, forKey: key)
         try? SMAppService.mainApp.register()
     }
+}
+
+// Salida de diagnóstico del idioma, antes de levantar nada de interfaz.
+if CommandLine.arguments.contains("--dump-strings") {
+    L10n.dump()
+    exit(0)
 }
 
 let application = NSApplication.shared

@@ -116,7 +116,35 @@ So `build.sh` creates a self-signed code-signing certificate the first time it r
 
 An `NSPopover` has an arrow and its own vibrancy, and it does not look like the Wi-Fi or Battery panels. Those are windows. So this is an `NSPanel` with an `NSVisualEffectView` in `.menu` material, continuous 14 pt corners and a hairline border, positioned under the status item and resized with an animated frame change.
 
+It closes the way a system panel does: click anywhere outside, press Escape, or click the icon again. That needs two mechanisms, not one — a global mouse monitor catches clicks that land in other apps, but the clock, Control Center and the other menu bar extras swallow the click inside their own tracking loop, and a Cmd-Tab isn't a click at all. What all of those *do* have in common is that the panel stops being the key window, so it also closes on losing focus — unless the focus went to one of its own menus, which is how the gear menu stays open.
+
 One consequence worth knowing: the panel deliberately does **not** activate the app, so it never steals focus from what you're typing in. But macOS draws its own controls desaturated when the owning app isn't active, which silently greys out any accent color. That's why the bars here are drawn by hand instead of using `ProgressView`.
+
+### Speaks your language
+
+The app follows the system. macOS picks the `.lproj` that matches your language order — or whatever you pinned for Vitals in **System Settings → General → Language & Region → Applications** — and falls back to English for anything it doesn't have.
+
+Adding a language is one file, no Swift:
+
+```sh
+cp -R Resources/en.lproj Resources/pt-BR.lproj
+$EDITOR Resources/pt-BR.lproj/Localizable.strings
+./build.sh
+```
+
+Three things make that safe rather than hopeful:
+
+- **The build fails on a broken table.** `Tools/check_strings.py` reads the keys straight out of `Sources/Localization.swift` and diffs them against every `.strings` file — a missing key, a stale one, or a translation whose format placeholders don't match the English original stops the build instead of shipping a raw `section.storage` into the UI.
+- **Numbers are the system's job, not ours.** Percentages go through `NumberFormatter`, sizes through `ByteCountFormatter`. That's why an English-language Mac set to Chile renders `58 %` with a space — exactly like the battery in its own menu bar — and a Spanish one renders `58%`.
+- **The cached snapshot stores the kind, not the label.** The last known usage survives on disk between launches; if it had held the word "Session" the panel would have come back in the previous language after you switched. It holds `.session` and translates at draw time.
+
+There's a way to see all of it without clicking anything:
+
+```sh
+Vitals.app/Contents/MacOS/Vitals --dump-strings -AppleLanguages "(es)"
+```
+
+It prints the localization macOS resolved, every key with its translation, and the phrases that take arguments already assembled — which is where a mis-numbered `%2$@` actually shows up.
 
 ### The menu bar icon is a template image
 
@@ -150,7 +178,7 @@ Drawing into the menu bar with a SwiftUI hosting view produces something that lo
 
 ## Caveats, honestly
 
-- **The UI is in Spanish.** All the strings live in `Sources/PanelView.swift` and `Sources/StatusIcon.swift`. Localizing it is a genuinely easy first contribution.
+- **Only English and Spanish ship today.** Any other system language falls back to English. Adding one is a `.strings` file away — see [Speaks your language](#speaks-your-language).
 - **The usage endpoint is undocumented.** It's what Claude Code itself calls. It could change.
 - **Requires a Claude subscription** signed in through Claude Code. Without it the Claude section stays empty and the rest still works.
 - **macOS 14+**, Apple Silicon (`build.sh` targets `arm64`).
@@ -160,6 +188,10 @@ Drawing into the menu bar with a SwiftUI hosting view produces something that lo
 ```
 Tools/
   MakeIcon.swift        draws the icon, builds the .icns
+  check_strings.py      diffs the .strings tables against the code
+Resources/
+  en.lproj/             English, the base language
+  es.lproj/             Spanish
 Sources/
   main.swift            status item, panel window, login item
   VitalsModel.swift      state, cadence, formatting
@@ -167,6 +199,7 @@ Sources/
   ClaudeUsage.swift      Keychain, usage API, backoff
   StatusIcon.swift       the menu bar ring, as a template image
   PanelView.swift        the panel
+  Localization.swift     every visible string, one key each
   SleepGuard.swift       power assertion and display sleep
   KeyboardLock.swift     keyboard lock with overlay
   ActivityWatcher.swift  FSEvents on ~/.claude/projects

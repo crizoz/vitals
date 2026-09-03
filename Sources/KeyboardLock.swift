@@ -122,28 +122,26 @@ private struct KeyboardLockView: View {
                     .font(.system(size: 54, weight: .light))
                     .foregroundStyle(.white)
 
-                Text("Teclado bloqueado")
+                Text(L10n.lockTitle)
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(.white)
 
-                Text("\(lock.secondsLeft) s")
+                Text(L10n.lockSeconds(lock.secondsLeft))
                     .font(.system(size: 64, weight: .light))
                     .monospacedDigit()
                     .contentTransition(.numericText(countsDown: true))
                     .animation(.easeOut(duration: 0.2), value: lock.secondsLeft)
                     .foregroundStyle(.white)
 
-                Text(lock.isPartial
-                     ? "El trackpad sigue activo. Sin permiso de Accesibilidad, los atajos del sistema como Cmd-Tab no quedan bloqueados."
-                     : "El trackpad sigue activo.")
+                Text(lock.isPartial ? L10n.lockNotePartial : L10n.lockNoteFull)
                     .font(.callout)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white.opacity(0.7))
                     .frame(maxWidth: 380)
 
                 HStack(spacing: 12) {
-                    Button("30 s más") { lock.extend() }
-                    Button("Terminar") { lock.stop() }
+                    Button(L10n.lockExtend) { lock.extend() }
+                    Button(L10n.lockFinish) { lock.stop() }
                         .keyboardShortcut(.defaultAction)
                 }
                 .controlSize(.large)

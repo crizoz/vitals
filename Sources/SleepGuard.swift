@@ -20,7 +20,7 @@ final class SleepGuard: ObservableObject {
         let result = IOPMAssertionCreateWithName(
             kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            "Vitals: trabajo en curso" as CFString,
+            L10n.sleepGuardAssertion as CFString,
             &id)
         guard result == kIOReturnSuccess else { return }
         assertion = id

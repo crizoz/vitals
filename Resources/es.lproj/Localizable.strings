@@ -1,0 +1,78 @@
+/* Vitals — español. */
+
+/* Secciones */
+"section.system"        = "Sistema";
+"section.storage"       = "Almacenamiento";
+"section.claude"        = "Claude";
+
+/* Sistema */
+"gauge.cpu"             = "CPU";
+"gauge.gpu"             = "GPU";
+"gauge.memory"          = "Memoria";
+
+/* Almacenamiento */
+"storage.reading"       = "Leyendo volúmenes…";
+"storage.internal"      = "Interno";
+"storage.external"      = "Externo";
+"storage.unnamed"       = "Disco";
+/* %@ es un tamaño, p. ej. "886 GB" */
+"storage.free"          = "%@ libres";
+/* %1$@ Interno/Externo, %2$@ usados, %3$@ total */
+"storage.help"          = "%1$@ · %2$@ usados de %3$@";
+
+/* Claude */
+"claude.loading"        = "Consultando límites…";
+"claude.session"        = "Sesión";
+"claude.weekly"         = "Semanal";
+"claude.model"          = "Modelo";
+"claude.used"           = "%@ usado";
+/* %1$@ porcentaje, %2$@ tiempo restante */
+"claude.usedResets"     = "%1$@ usado · se reinicia en %2$@";
+"claude.pace"           = "La marca es el %@ de la ventana ya transcurrido";
+
+/* Barra de menús */
+/* %1$@ usado, %2$@ restante */
+"menubar.tooltip"       = "Sesión de 5 h: %1$@ usado, queda %2$@";
+"menubar.tooltip.resets" = " · se reinicia en %@";
+"menubar.noData"        = "Sesión de Claude · sin datos";
+
+/* Acciones y ajustes */
+"action.refresh"        = "Actualizar ahora";
+"action.quit"           = "Salir de Vitals";
+"settings.showPercent"  = "Mostrar porcentaje en la barra";
+"settings.launchAtLogin" = "Abrir al iniciar sesión";
+
+"help.keyboardLock"     = "Bloquea las teclas 30 s para limpiarlas. El trackpad sigue libre.";
+"help.caffeine.on"      = "El Mac no se dormirá. Toca para apagarlo.";
+"help.caffeine.off"     = "Evita que el Mac se duerma. La pantalla igual puede apagarse.";
+"help.screenOff"        = "Apaga la pantalla y deja el Mac despierto para que siga trabajando.";
+
+/* Frescura del dato */
+"freshness.now"         = "Actualizado recién";
+"freshness.minutes"     = "Actualizado hace %d min";
+"freshness.hours"       = "Actualizado hace %d h";
+
+/* Cuenta regresiva */
+"countdown.now"         = "ahora";
+"countdown.days"        = "%1$d d %2$d h";
+"countdown.hours"       = "%1$d h %2$d min";
+"countdown.minutes"     = "%d min";
+
+/* Bloqueo del teclado */
+"lock.title"            = "Teclado bloqueado";
+"lock.seconds"          = "%d s";
+"lock.note.full"        = "El trackpad sigue activo.";
+"lock.note.partial"     = "El trackpad sigue activo. Sin permiso de Accesibilidad, los atajos del sistema como Cmd-Tab no quedan bloqueados.";
+"lock.extend"           = "30 s más";
+"lock.finish"           = "Terminar";
+
+/* Sin dormir — es lo que muestra `pmset -g assertions` */
+"sleepGuard.assertion"  = "Vitals: trabajo en curso";
+
+/* Errores */
+"error.noCredentials"   = "Inicia sesión en Claude Code";
+"error.keychainAccess"  = "Autoriza el acceso al llavero";
+"error.keychain"        = "Llavero: error %@";
+"error.rateLimited"     = "Consultas limitadas, reintentando";
+"error.expired"         = "Sesión expirada";
+"error.status"          = "Error %@";

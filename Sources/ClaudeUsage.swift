@@ -4,13 +4,30 @@ import Security
 // MARK: - Modelos
 
 struct LimitBucket: Identifiable, Hashable, Codable {
+    /// Qué límite es. Se guarda el tipo y no el rótulo ya traducido: el último
+    /// dato conocido sobrevive en disco entre arranques, y con el texto adentro
+    /// habría quedado en el idioma de la sesión que lo escribió.
+    enum Kind: String, Codable {
+        case session, weekly, model
+    }
+
     let id: String
-    let title: String
+    let kind: Kind
+    /// Solo para `.model`: el nombre que manda el servidor, que no se traduce.
+    let name: String?
     let fraction: Double
     let resetsAt: Date?
     /// Largo total de la ventana: 5 h para la sesión, 7 días para las semanales.
     let window: TimeInterval?
     let severity: String
+
+    var title: String {
+        switch kind {
+        case .session: return L10n.claudeSession
+        case .weekly: return L10n.claudeWeekly
+        case .model: return name ?? L10n.claudeModel
+        }
+    }
 
     static let sessionWindow: TimeInterval = 5 * 3_600
     static let weeklyWindow: TimeInterval = 7 * 86_400
@@ -41,17 +58,17 @@ enum VitalsError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noCredentials:
-            return "Inicia sesión en Claude Code"
+            return L10n.errorNoCredentials
         case .keychain(errSecUserCanceled), .keychain(errSecAuthFailed), .keychain(errSecInteractionNotAllowed):
-            return "Autoriza el acceso al llavero"
+            return L10n.errorKeychainAccess
         case .keychain(let status):
-            return "Llavero: error \(status)"
+            return L10n.errorKeychain(status)
         case .rateLimited:
-            return "Consultas limitadas, reintentando"
+            return L10n.errorRateLimited
         case .badStatus(401), .badStatus(403):
-            return "Sesión expirada"
+            return L10n.errorExpired
         case .badStatus(let code):
-            return "Error \(code)"
+            return L10n.errorStatus(code)
         }
     }
 }
@@ -127,18 +144,18 @@ enum ClaudeAPI {
 
             switch kind {
             case "session":
-                snapshot.session = LimitBucket(id: "session", title: "Sesión",
+                snapshot.session = LimitBucket(id: "session", kind: .session, name: nil,
                                                fraction: percent / 100, resetsAt: reset,
                                                window: LimitBucket.sessionWindow, severity: severity)
             case "weekly_all":
-                snapshot.weekly = LimitBucket(id: "weekly", title: "Semanal",
+                snapshot.weekly = LimitBucket(id: "weekly", kind: .weekly, name: nil,
                                               fraction: percent / 100, resetsAt: reset,
                                               window: LimitBucket.weeklyWindow, severity: severity)
             case "weekly_scoped":
                 let scope = raw["scope"] as? [String: Any]
                 let model = scope?["model"] as? [String: Any]
-                let name = model?["display_name"] as? String ?? "Modelo"
-                snapshot.scoped.append(LimitBucket(id: "weekly_\(name)", title: name,
+                let name = model?["display_name"] as? String
+                snapshot.scoped.append(LimitBucket(id: "weekly_\(name ?? "model")", kind: .model, name: name,
                                                    fraction: percent / 100, resetsAt: reset,
                                                    window: LimitBucket.weeklyWindow, severity: severity))
             default:
@@ -148,13 +165,13 @@ enum ClaudeAPI {
 
         // Respaldo si el arreglo `limits` no viniera.
         if snapshot.session == nil, let bucket = json["five_hour"] as? [String: Any] {
-            snapshot.session = LimitBucket(id: "session", title: "Sesión",
+            snapshot.session = LimitBucket(id: "session", kind: .session, name: nil,
                                            fraction: ((bucket["utilization"] as? NSNumber)?.doubleValue ?? 0) / 100,
                                            resetsAt: date(from: bucket["resets_at"] as? String),
                                            window: LimitBucket.sessionWindow, severity: "normal")
         }
         if snapshot.weekly == nil, let bucket = json["seven_day"] as? [String: Any] {
-            snapshot.weekly = LimitBucket(id: "weekly", title: "Semanal",
+            snapshot.weekly = LimitBucket(id: "weekly", kind: .weekly, name: nil,
                                           fraction: ((bucket["utilization"] as? NSNumber)?.doubleValue ?? 0) / 100,
                                           resetsAt: date(from: bucket["resets_at"] as? String),
                                           window: LimitBucket.weeklyWindow, severity: "normal")

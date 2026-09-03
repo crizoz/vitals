@@ -175,8 +175,18 @@ final class VitalsModel: ObservableObject {
 // MARK: - Formato
 
 enum Format {
+    /// El signo no va pegado en todos los idiomas —el francés lo separa— así
+    /// que el porcentaje lo arma el sistema, no una interpolación.
+    private static let percentFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .percent
+        formatter.maximumFractionDigits = 0
+        formatter.roundingMode = .halfUp
+        return formatter
+    }()
+
     static func percent(_ value: Double) -> String {
-        "\(Int((value * 100).rounded()))%"
+        percentFormatter.string(from: NSNumber(value: value)) ?? "\(Int((value * 100).rounded()))%"
     }
 
     static func bytes(_ value: UInt64) -> String {
@@ -199,22 +209,14 @@ enum Format {
     /// "52 min" / "4 d 5 h"
     static func countdown(to date: Date) -> String {
         let seconds = Int(date.timeIntervalSinceNow)
-        guard seconds > 0 else { return "ahora" }
+        guard seconds > 0 else { return L10n.countdownNow }
         let days = seconds / 86_400
         let hours = (seconds % 86_400) / 3_600
         let minutes = (seconds % 3_600) / 60
-        if days > 0 { return "\(days) d \(hours) h" }
-        if hours > 0 { return "\(hours) h \(minutes) min" }
-        return "\(minutes) min"
+        if days > 0 { return L10n.countdownDays(days, hours) }
+        if hours > 0 { return L10n.countdownHours(hours, minutes) }
+        return L10n.countdownMinutes(minutes)
     }
-
-    static func time(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "es_CL")
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
-    }
-
 }
 
 extension Color {
