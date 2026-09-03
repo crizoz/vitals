@@ -76,12 +76,118 @@ enum VitalsError: LocalizedError {
 // MARK: - Credenciales
 
 enum ClaudeCredentials {
-    /// Lee el token OAuth que Claude Code guarda en el llavero. Se relee en cada
-    /// consulta porque el CLI lo rota.
+    /// El ítem del llavero donde Claude Code deja el token OAuth.
+    private static let service = "Claude Code-credentials"
+
+    /// El ítem lo escribe Claude Code con `/usr/bin/security`, así que su ACL
+    /// confía en esa herramienta y su lista de particiones queda en
+    /// `apple-tool:` —la que cubre a las herramientas firmadas por Apple—. Cada
+    /// vez que el CLI rota el token vuelve a escribirlo y la lista se resetea,
+    /// de modo que cualquier otra app queda fuera y macOS pide la contraseña
+    /// del llavero otra vez. Autorizar "Permitir siempre" no alcanza: agrega a
+    /// Vitals a la lista de apps confiables, pero no a la partición, y el
+    /// siguiente refresco del token deshace el permiso.
+    ///
+    /// Por eso se lee a través de `security`, igual que hace Claude Code: el
+    /// que pide el secreto es una herramienta que el ítem ya autoriza, y no hay
+    /// diálogo. Si por lo que sea no está disponible, se cae al acceso directo
+    /// de siempre.
+    private static let securityTool = "/usr/bin/security"
+
+    private static let lock = NSLock()
+    private static var cached: (token: String, validUntil: Date)?
+
+    /// Vale entre lecturas mientras el token siga vigente. El margen deja
+    /// afuera el borde en que el CLI ya lo rotó pero el reloj aún no lo dice.
+    private static let expiryMargin: TimeInterval = 120
+    /// Si el JSON no trae vencimiento, se releé cada tanto por las dudas.
+    private static let fallbackTTL: TimeInterval = 300
+
+    /// Descarta el token guardado: se llama cuando el servidor lo rechaza, para
+    /// que el próximo intento vaya al llavero en vez de reusar uno vencido.
+    static func invalidate() {
+        lock.lock(); defer { lock.unlock() }
+        cached = nil
+    }
+
     static func accessToken() throws -> String {
+        lock.lock()
+        if let cached, cached.validUntil > Date() {
+            defer { lock.unlock() }
+            return cached.token
+        }
+        lock.unlock()
+
+        let data = try readItem()
+        let (token, expiresAt) = try parse(data)
+
+        lock.lock()
+        cached = (token, expiresAt ?? Date().addingTimeInterval(fallbackTTL))
+        lock.unlock()
+        return token
+    }
+
+    private static func parse(_ data: Data) throws -> (String, Date?) {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let oauth = json["claudeAiOauth"] as? [String: Any],
+              let token = oauth["accessToken"] as? String,
+              !token.isEmpty
+        else { throw VitalsError.noCredentials }
+
+        // `expiresAt` viene en milisegundos desde epoch.
+        var expiry: Date?
+        if let millis = (oauth["expiresAt"] as? NSNumber)?.doubleValue, millis > 0 {
+            let date = Date(timeIntervalSince1970: millis / 1000).addingTimeInterval(-expiryMargin)
+            if date > Date() { expiry = date }
+        }
+        return (token, expiry)
+    }
+
+    private static func readItem() throws -> Data {
+        do { return try readViaSecurityTool() }
+        catch VitalsError.noCredentials { throw VitalsError.noCredentials }
+        catch { return try readViaKeychainAPI() }
+    }
+
+    /// `security find-generic-password -w` escribe el secreto en stdout y nada
+    /// más. Sale 44 cuando el ítem no existe.
+    private static func readViaSecurityTool() throws -> Data {
+        guard FileManager.default.isExecutableFile(atPath: securityTool) else {
+            throw VitalsError.keychain(errSecInternalError)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: securityTool)
+        process.arguments = ["find-generic-password", "-s", service, "-w"]
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+
+        do { try process.run() } catch { throw VitalsError.keychain(errSecInternalError) }
+
+        // Un llavero bloqueado dejaría al CLI esperando una respuesta que nadie
+        // va a dar: se corta y se sigue por el otro camino.
+        let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30, execute: watchdog)
+
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        watchdog.cancel()
+
+        if process.terminationStatus == 44 { throw VitalsError.noCredentials }
+        guard process.terminationStatus == 0, !data.isEmpty else {
+            throw VitalsError.keychain(errSecInternalError)
+        }
+        return data
+    }
+
+    /// El camino de siempre. Puede abrir el diálogo del llavero, así que queda
+    /// solo como respaldo.
+    private static func readViaKeychainAPI() throws -> Data {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
+            kSecAttrService as String: service,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
@@ -89,17 +195,11 @@ enum ClaudeCredentials {
         let status = SecItemCopyMatching(query as CFDictionary, &item)
 
         if status == errSecItemNotFound { throw VitalsError.noCredentials }
-        guard status == errSecSuccess else {
+        guard status == errSecSuccess, let data = item as? Data else {
             FileHandle.standardError.write(Data("keychain OSStatus \(status)\n".utf8))
             throw VitalsError.keychain(status)
         }
-        guard let data = item as? Data,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = json["claudeAiOauth"] as? [String: Any],
-              let token = oauth["accessToken"] as? String,
-              !token.isEmpty
-        else { throw VitalsError.noCredentials }
-        return token
+        return data
     }
 }
 
@@ -124,6 +224,10 @@ enum ClaudeAPI {
         if http.statusCode == 429 {
             let header = http.value(forHTTPHeaderField: "retry-after").flatMap(TimeInterval.init) ?? 0
             throw VitalsError.rateLimited(retryAfter: header)
+        }
+        if http.statusCode == 401 || http.statusCode == 403 {
+            // El CLI ya rotó el token: el guardado no sirve más.
+            ClaudeCredentials.invalidate()
         }
         guard http.statusCode == 200 else { throw VitalsError.badStatus(http.statusCode) }
 

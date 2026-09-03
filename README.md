@@ -39,7 +39,7 @@ cd vitals
 
 That compiles it, signs it, drops it in `/Applications` and launches it. There's a "Open at login" toggle in the gear menu.
 
-macOS will ask **once** for permission to read the Claude Code credentials from your Keychain. Choose **Always Allow**.
+No Keychain dialog: Vitals reads the credentials the same way Claude Code writes them, through `/usr/bin/security` — see [Reading a Keychain item you don't own](#reading-a-keychain-item-you-dont-own).
 
 ---
 
@@ -59,7 +59,7 @@ anthropic-beta: oauth-2025-04-20
 
 The response carries a `limits[]` array with `session`, `weekly_all` and `weekly_scoped` — the last one naming the model it applies to. Those are the same percentages `/usage` shows you inside Claude Code.
 
-The token is read from the Keychain **on every request** and never copied anywhere, because Claude Code rotates it.
+The token is read from the Keychain, kept in memory only until it expires, and never written anywhere. Claude Code rotates it, so the cached copy is dropped the moment the API answers 401.
 
 ### The pace mark
 
@@ -108,9 +108,23 @@ The app icon isn't a binary asset either. `Tools/MakeIcon.swift` draws it with C
 
 ### Signed with a stable identity, on purpose
 
-Ad-hoc signing produces a new signature on every build. Keychain permissions are bound to the signature, so an ad-hoc app asks for authorization **every single time you rebuild it**.
+Ad-hoc signing produces a new signature on every build, and anything bound to the signature — Keychain permissions, TCC grants, the login item — breaks every time you rebuild.
 
-So `build.sh` creates a self-signed code-signing certificate the first time it runs, imports it into your login Keychain, and signs with that. The designated requirement becomes `identifier "cl.makana.vitals" and certificate leaf = H"…"`, which is stable. Authorize once, never again. The private key only exists in your Keychain — the script deletes its temporary files.
+So `build.sh` creates a self-signed code-signing certificate the first time it runs, imports it into your login Keychain, and signs with that. The designated requirement becomes `identifier "cl.makana.vitals" and certificate leaf = H"…"`, which is stable. The private key only exists in your Keychain — the script deletes its temporary files.
+
+### Reading a Keychain item you don't own
+
+`Claude Code-credentials` belongs to Claude Code, which writes it through `/usr/bin/security`. That leaves the item with an ACL that trusts that tool and a **partition list** of `apple-tool:` — the partition covering Apple-signed tools, and nothing else.
+
+Partitions are the part people miss. Clicking **Always Allow** adds your app to the item's trusted-application list, but not to its partition list, and every token rotation rewrites the item and resets the partitions. The result is the dialog coming back every few hours, forever — and it asks for your login password, which is the tell that it is a partition check and not a trusted-app check.
+
+You can watch it happen:
+
+```bash
+security find-generic-password -s "Claude Code-credentials" | grep mdat   # rotates
+```
+
+So Vitals doesn't fight it. It asks `/usr/bin/security` for the secret, exactly like Claude Code does: the process requesting the item is one the item already authorizes, so no dialog appears. The direct `SecItemCopyMatching` path is still there as a fallback.
 
 ### The panel is not an NSPopover
 
