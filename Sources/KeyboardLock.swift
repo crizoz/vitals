@@ -49,19 +49,52 @@ final class KeyboardLock: ObservableObject {
 
     // MARK: - Intercepción de teclas
 
+    /// Tipos que no son casos de `CGEventType`: hay que compararlos crudos.
+    private static let systemDefined: UInt32 = 14        // NX_SYSDEFINED
+    private static let auxButtons: Int16 = 8             // NX_SUBTYPE_AUX_CONTROL_BUTTONS
+
     /// Traga teclas a nivel de sesión. Requiere Accesibilidad; si no está, la
     /// ventana en primer plano igual absorbe lo que se escribe.
+    ///
+    /// La fila de arriba —brillo, volumen, reproducción, Mission Control— no
+    /// viaja como tecla: sale como evento de sistema (tipo 14, subtipo 8), que
+    /// no entra por keyDown. Sin atajarlo, pasar el paño por las F cambia el
+    /// brillo igual. Fn y Bloq Mayús las resuelve el teclado antes del tap: esas
+    /// no hay cómo atajarlas.
     private func startEventTap() -> Bool {
         let mask = (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
             | (1 << CGEventType.flagsChanged.rawValue)
+            | (1 << KeyboardLock.systemDefined)
 
         guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap,
                                           place: .headInsertEventTap,
                                           options: .defaultTap,
                                           eventsOfInterest: CGEventMask(mask),
-                                          callback: { _, _, _, _ in nil },
-                                          userInfo: nil)
+                                          callback: { _, type, event, userInfo in
+            guard let userInfo else { return Unmanaged.passUnretained(event) }
+            let lock = Unmanaged<KeyboardLock>.fromOpaque(userInfo).takeUnretainedValue()
+
+            // El sistema apaga el tap si tarda en responder; hay que revivirlo o
+            // el bloqueo queda de adorno.
+            if type.rawValue == CGEventType.tapDisabledByTimeout.rawValue
+                || type.rawValue == CGEventType.tapDisabledByUserInput.rawValue {
+                lock.enableTap()
+                return nil
+            }
+
+            // De los eventos de sistema solo interesan los botones auxiliares:
+            // los demás subtipos son cosas del mouse y se dejan pasar.
+            if type.rawValue == KeyboardLock.systemDefined {
+                guard let nsEvent = NSEvent(cgEvent: event),
+                      nsEvent.type == .systemDefined,
+                      nsEvent.subtype.rawValue == KeyboardLock.auxButtons
+                else { return Unmanaged.passUnretained(event) }
+            }
+
+            return nil
+        },
+                                          userInfo: Unmanaged.passUnretained(self).toOpaque())
         else { return false }
 
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
@@ -72,8 +105,16 @@ final class KeyboardLock: ObservableObject {
         return true
     }
 
+    fileprivate func enableTap() {
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
     private func stopEventTap() {
-        if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         tap = nil
         source = nil
