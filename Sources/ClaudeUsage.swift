@@ -94,53 +94,25 @@ enum ClaudeCredentials {
     /// de siempre.
     private static let securityTool = "/usr/bin/security"
 
-    private static let lock = NSLock()
-    private static var cached: (token: String, validUntil: Date)?
-
-    /// Vale entre lecturas mientras el token siga vigente. El margen deja
-    /// afuera el borde en que el CLI ya lo rotó pero el reloj aún no lo dice.
-    private static let expiryMargin: TimeInterval = 120
-    /// Si el JSON no trae vencimiento, se releé cada tanto por las dudas.
-    private static let fallbackTTL: TimeInterval = 300
-
-    /// Descarta el token guardado: se llama cuando el servidor lo rechaza, para
-    /// que el próximo intento vaya al llavero en vez de reusar uno vencido.
-    static func invalidate() {
-        lock.lock(); defer { lock.unlock() }
-        cached = nil
-    }
-
+    /// El token no se guarda entre consultas, a propósito. Guardarlo hasta su
+    /// vencimiento —unas doce horas— hacía que un `/login` con otra cuenta
+    /// pasara inadvertido: el token anterior seguía vivo, la API contestaba 200
+    /// igual, y el panel mostraba el consumo de la cuenta vieja media jornada
+    /// sin un solo error a la vista. Releerlo cada vez deja que la cuenta que
+    /// manda sea siempre la que está en el llavero. Cuesta un `security` cada
+    /// 30 s en el peor caso, y como es el proceso que el ítem ya autoriza,
+    /// ninguna de esas lecturas abre el diálogo.
     static func accessToken() throws -> String {
-        lock.lock()
-        if let cached, cached.validUntil > Date() {
-            defer { lock.unlock() }
-            return cached.token
-        }
-        lock.unlock()
-
-        let data = try readItem()
-        let (token, expiresAt) = try parse(data)
-
-        lock.lock()
-        cached = (token, expiresAt ?? Date().addingTimeInterval(fallbackTTL))
-        lock.unlock()
-        return token
+        try parse(readItem())
     }
 
-    private static func parse(_ data: Data) throws -> (String, Date?) {
+    private static func parse(_ data: Data) throws -> String {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = json["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String,
               !token.isEmpty
         else { throw VitalsError.noCredentials }
-
-        // `expiresAt` viene en milisegundos desde epoch.
-        var expiry: Date?
-        if let millis = (oauth["expiresAt"] as? NSNumber)?.doubleValue, millis > 0 {
-            let date = Date(timeIntervalSince1970: millis / 1000).addingTimeInterval(-expiryMargin)
-            if date > Date() { expiry = date }
-        }
-        return (token, expiry)
+        return token
     }
 
     private static func readItem() throws -> Data {
@@ -224,10 +196,6 @@ enum ClaudeAPI {
         if http.statusCode == 429 {
             let header = http.value(forHTTPHeaderField: "retry-after").flatMap(TimeInterval.init) ?? 0
             throw VitalsError.rateLimited(retryAfter: header)
-        }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            // El CLI ya rotó el token: el guardado no sirve más.
-            ClaudeCredentials.invalidate()
         }
         guard http.statusCode == 200 else { throw VitalsError.badStatus(http.statusCode) }
 
