@@ -79,13 +79,14 @@ The closest comparable app polls the usage endpoint every 5 to 120 seconds. That
 
 Vitals borrows the idea behind [CCSeva](https://github.com/Iamshankhadeep/ccseva) and takes it further:
 
-- **An FSEvents watcher on `~/.claude/projects`.** If Claude Code hasn't written anything, your usage cannot have changed, so there is nothing to ask. When it does write, we refresh — with a 60-second floor so one long turn doesn't fire twenty requests.
-- **A 10-minute fallback timer**, whose only job is catching the moment a window resets on its own.
+- **An FSEvents watcher on `~/.claude/projects`.** If Claude Code hasn't written anything, your usage cannot have changed, so there is nothing to ask. When it does write, we refresh — with a 30-second floor so one long turn doesn't fire twenty requests.
+- **A cadence that follows what can actually change.** Every 15 seconds the app asks itself whether a request is worth it, and almost always answers no: 30 seconds apart while the panel is open and you're looking at the number, 60 while Claude Code is working, 5 minutes when the Mac is quiet. Opening the panel refreshes on the spot.
+- **A wake-up at the reset.** Each answer says when the next window rolls over, and that's the one moment the limits drop with no local activity to announce it — so the app comes back right then instead of waiting out the timer.
 - **Exponential backoff on 429**, from 60 seconds up to 15 minutes, honoring `retry-after`.
 - **The last snapshot is persisted**, so a restart shows real numbers instead of dashes, and the app doesn't fire a request at launch if what it has is under two minutes old.
 - **CPU, GPU and memory aren't sampled at all while the panel is closed.** Nothing on screen depends on them — the menu bar shows Claude, not the Mac.
 
-With the panel closed, the whole app is one HTTPS request every few minutes and nothing else.
+With the panel closed and nobody working, the whole app is one HTTPS request every five minutes and nothing else.
 
 ### Every metric, without a single privilege
 

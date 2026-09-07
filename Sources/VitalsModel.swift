@@ -20,6 +20,12 @@ final class VitalsModel: ObservableObject {
     private var systemTimer: Timer?
     private var usageTimer: Timer?
     private var lastUsageFetch: Date?
+    /// Última vez que Claude Code escribió algo. Marca la diferencia entre
+    /// "estás trabajando" y "la app está sola en la barra".
+    private var lastActivity: Date?
+    /// El próximo reinicio de ventana conocido: el único momento en que los
+    /// límites bajan sin que haya actividad que lo delate.
+    private var pendingReset: Date?
     /// Espera creciente tras un rechazo del servidor. Insistir cada 3 minutos
     /// contra un 429 solo alarga el bloqueo.
     private var backoff: TimeInterval = 0
@@ -33,11 +39,21 @@ final class VitalsModel: ObservableObject {
     /// el muestreo de sistema no corre en segundo plano, no baja de frecuencia.
     private let systemInterval: TimeInterval = 3
     private let diskInterval: TimeInterval = 300
-    /// Red de seguridad: los límites también bajan solos cuando se reinicia la
-    /// ventana, sin que haya actividad local que lo delate.
-    private let usageInterval: TimeInterval = 600
+
+    /// La cadencia se adapta a lo que puede haber cambiado, en vez de ser un
+    /// intervalo fijo: con el panel abierto lo estás mirando, mientras Claude
+    /// escribe el consumo sube, y en silencio lo único que corre es el reloj.
+    private let openInterval: TimeInterval = 30
+    private let workingInterval: TimeInterval = 60
+    private let idleInterval: TimeInterval = 300
+    /// Cuánto rato después de la última escritura se sigue contando como
+    /// trabajando: un turno largo puede pensar varios minutos sin tocar disco.
+    private let workingWindow: TimeInterval = 10 * 60
+    /// Cada cuánto se evalúa si toca consultar. No es una consulta: son dos
+    /// comparaciones de fechas, con tolerancia para que macOS junte los avisos.
+    private let tickInterval: TimeInterval = 15
     /// Piso entre consultas gatilladas por actividad.
-    private let activityCooldown: TimeInterval = 60
+    private let activityCooldown: TimeInterval = 30
     private var watcher: ActivityWatcher?
 
     // MARK: - Ciclo de vida
@@ -48,9 +64,10 @@ final class VitalsModel: ObservableObject {
         // reiniciar la app varias veces seguidas era lo que gatillaba el 429.
         if elapsed(since: usage?.fetchedAt) > 120 { refreshClaude() }
 
-        let timer = Timer(timeInterval: usageInterval, repeats: true) { [weak self] _ in
-            self?.refreshClaude()
+        let timer = Timer(timeInterval: tickInterval, repeats: true) { [weak self] _ in
+            self?.tickUsage()
         }
+        timer.tolerance = tickInterval / 3
         RunLoop.main.add(timer, forMode: .common)
         usageTimer = timer
 
@@ -58,10 +75,31 @@ final class VitalsModel: ObservableObject {
         watcher?.start()
     }
 
-    /// Claude Code escribió algo: puede haber consumo nuevo. Con un piso de un
-    /// minuto entre consultas, por si el turno escribe muchas veces.
+    /// Claude Code escribió algo: puede haber consumo nuevo. Con un piso entre
+    /// consultas, por si el turno escribe muchas veces seguidas.
     private func claudeDidWork() {
+        lastActivity = Date()
         guard elapsed(since: lastUsageFetch) > activityCooldown else { return }
+        refreshClaude()
+    }
+
+    /// Cada cuánto corresponde consultar, según lo que está pasando.
+    private var usageInterval: TimeInterval {
+        if isPanelOpen { return openInterval }
+        if elapsed(since: lastActivity) < workingWindow { return workingInterval }
+        return idleInterval
+    }
+
+    /// Se llama cada pocos segundos y casi siempre no hace nada.
+    private func tickUsage() {
+        // Una ventana que acaba de reiniciarse deja el porcentaje al día aunque
+        // no haya habido una sola escritura en horas.
+        if let pendingReset, Date() >= pendingReset {
+            self.pendingReset = nil
+            refreshClaude()
+            return
+        }
+        guard elapsed(since: lastUsageFetch) >= usageInterval else { return }
         refreshClaude()
     }
 
@@ -94,7 +132,9 @@ final class VitalsModel: ObservableObject {
     /// Al abrir el panel: pone al día lo que ya está viejo.
     func refreshIfStale() {
         if elapsed(since: lastDiskScan) > diskInterval { refreshDisks() }
-        if elapsed(since: lastUsageFetch) > 90 { refreshClaude() }
+        // Abrir el panel es la señal más clara de que el número importa ahora:
+        // se consulta salvo que la respuesta sea de hace un pestañeo.
+        if elapsed(since: lastUsageFetch) > 10 { refreshClaude() }
     }
 
     // MARK: - Lecturas
@@ -145,6 +185,7 @@ final class VitalsModel: ObservableObject {
             retryNotBefore = nil
             storeUsage(snapshot)
             lastUpdate = Date()
+            pendingReset = nextReset(in: snapshot)
         case .failure(let error):
             usageError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             backoff = backoff == 0 ? 60 : min(backoff * 2, 900)
@@ -153,6 +194,16 @@ final class VitalsModel: ObservableObject {
             retryNotBefore = Date().addingTimeInterval(wait)
         }
         isRefreshing = false
+    }
+
+    /// El reinicio más cercano de todos los límites, con unos segundos de
+    /// gracia para no llegar antes que el servidor.
+    private func nextReset(in snapshot: ClaudeUsageSnapshot) -> Date? {
+        let buckets = [snapshot.session, snapshot.weekly] + snapshot.scoped.map(Optional.init)
+        return buckets.compactMap { $0?.resetsAt }
+            .filter { $0 > Date() }
+            .min()?
+            .addingTimeInterval(5)
     }
 
     // MARK: - Último dato conocido
@@ -164,6 +215,7 @@ final class VitalsModel: ObservableObject {
         else { return }
         usage = snapshot
         lastUpdate = snapshot.fetchedAt
+        pendingReset = nextReset(in: snapshot)
     }
 
     private func storeUsage(_ snapshot: ClaudeUsageSnapshot) {
